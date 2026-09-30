@@ -1,0 +1,48 @@
+{
+  "name": "seguimiento-clientes",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Seguimiento de clientes, tiempo y facturación sincronizado entre Windows y Android",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k \"npm:server\" \"npm:web\"",
+    "server": "node server/index.js",
+    "web": "vite --config web/vite.config.js",
+    "build:web": "vite build --config web/vite.config.js",
+    "start": "npm run build:web && node server/index.js",
+    "win": "npm run build:web && npx electron .",
+    "win:dist": "npm run build:web && npx electron-builder --win portable nsis"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "vite": "^5.4.11"
+  },
+  "build": {
+    "appId": "com.afid.seguimiento",
+    "productName": "Seguimiento Clientes",
+    "directories": { "output": "dist-win" },
+    "files": [
+      "electron/**/*",
+      "server/**/*",
+      "web/dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [],
+    "win": {
+      "target": ["portable", "nsis"],
+      "artifactName": "SeguimientoClientes-${version}-${os}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

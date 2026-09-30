@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: seguimiento-clientes
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build:web
+    startCommand: node server/index.js
+    envVars:
+      - key: APP_PASSWORD
+        generateValue: true
+      - key: DATA_DIR
+        value: /opt/render/project/src/data
+    disk:
+      name: datos
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1

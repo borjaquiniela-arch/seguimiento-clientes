@@ -1,0 +1,19 @@
+{
+  "password": "afid2026",
+  "entries": [],
+  "clients": [],
+  "company": {
+    "nom": "A-Fid Comptabilité",
+    "adresse": "Rue Es Crès 3",
+    "npaLocalite": "2830 Courrendlin",
+    "telephone": "",
+    "email": "",
+    "ide": "",
+    "iban": "",
+    "tvaRate": "0",
+    "delaiPaiement": "30",
+    "piedDePage": "Merci de votre confiance."
+  },
+  "invoices": [],
+  "timer": null
+}
