@@ -17,13 +17,14 @@ function apiBase() {
 
 async function api(path, opts = {}) {
   const token = localStorage.getItem("sc-token") || "";
+  const headers = {
+    Authorization: token ? `Bearer ${token}` : "",
+    ...(opts.headers || {}),
+  };
+  if (!(opts.body instanceof FormData) && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
   const res = await fetch(`${apiBase()}${path}`, {
     ...opts,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: token ? `Bearer ${token}` : "",
-      ...(opts.headers || {}),
-    },
+    headers,
   });
   if (res.status === 401) throw new Error("auth");
   if (!res.ok) {
@@ -32,6 +33,8 @@ async function api(path, opts = {}) {
   }
   return res.json();
 }
+
+window.scApi = api;
 
 function installStorage() {
   const cache = {};
@@ -45,6 +48,7 @@ function installStorage() {
     });
     return boot;
   };
+  const pending = {};
   window.storage = {
     async get(key) {
       await ensure();
@@ -54,13 +58,17 @@ function installStorage() {
       cache[key] = value;
       const remote = KEY_MAP[key];
       if (!remote) return;
-      await api(`/api/data/${remote}`, { method: "PUT", body: value });
+      const run = () => api(`/api/data/${remote}`, { method: "PUT", body: value });
+      const prev = pending[key] || Promise.resolve();
+      pending[key] = prev.then(run, run);
+      return pending[key];
     },
   };
 }
 
 function Login({ onReady }) {
   const [server, setServer] = useState(localStorage.getItem("sc-server") || "");
+  const [username, setUsername] = useState(localStorage.getItem("sc-user-name") || "");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -73,17 +81,15 @@ function Login({ onReady }) {
       localStorage.setItem("sc-server", server.trim());
       const data = await api("/api/login", {
         method: "POST",
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ username: username.trim(), password }),
       });
       localStorage.setItem("sc-token", data.token);
+      localStorage.setItem("sc-user", JSON.stringify(data.user));
+      localStorage.setItem("sc-user-name", data.user.username);
       installStorage();
       onReady();
     } catch (err) {
-      setError(
-        err.message === "auth"
-          ? "Contraseña incorrecta"
-          : "No se pudo conectar. En el móvil use http://IP-DEL-PC:8787"
-      );
+      setError(err.message === "auth" ? "Usuario o contraseña incorrectos" : "No se pudo conectar. Compruebe la dirección.");
     } finally {
       setBusy(false);
     }
@@ -94,22 +100,29 @@ function Login({ onReady }) {
       <form onSubmit={submit} style={{ width: "100%", maxWidth: 420, background: "#fff", border: "1px solid #DCD9CF", padding: 28 }}>
         <div style={{ fontFamily: "Georgia, serif", fontSize: 28, color: "#16325C", marginBottom: 6 }}>Seguimiento</div>
         <p style={{ color: "#6B6B62", fontSize: 14, marginBottom: 20 }}>
-          Misma cuenta en el PC y el móvil, desde cualquier red. Si abre la app ya alojada en internet, deje el servidor vacío.
+          Cada persona entra con su usuario. El usuario prueba no toca los clientes reales.
         </p>
         <label style={{ fontSize: 12, color: "#6B6B62", display: "block", marginBottom: 6 }}>Servidor (URL pública)</label>
         <input
           value={server}
           onChange={(e) => setServer(e.target.value)}
-          placeholder="https://su-app.onrender.com"
+          placeholder="https://seguimiento-clientes.onrender.com"
           style={{ width: "100%", border: "1px solid #DCD9CF", padding: "10px 12px", marginBottom: 14, fontFamily: "monospace" }}
+        />
+        <label style={{ fontSize: 12, color: "#6B6B62", display: "block", marginBottom: 6 }}>Usuario</label>
+        <input
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder="admin o prueba"
+          autoFocus
+          style={{ width: "100%", border: "1px solid #DCD9CF", padding: "10px 12px", marginBottom: 14 }}
         />
         <label style={{ fontSize: 12, color: "#6B6B62", display: "block", marginBottom: 6 }}>Contraseña</label>
         <input
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          placeholder="afid2026"
-          autoFocus
+          placeholder="contraseña"
           style={{ width: "100%", border: "1px solid #DCD9CF", padding: "10px 12px", marginBottom: 16 }}
         />
         {error && <div style={{ color: "#B85C4A", fontSize: 13, marginBottom: 12 }}>{error}</div>}
@@ -119,6 +132,9 @@ function Login({ onReady }) {
         >
           {busy ? "Conectando…" : "Entrar"}
         </button>
+        <p style={{ color: "#6B6B62", fontSize: 12, marginTop: 14, lineHeight: 1.45 }}>
+          Real: usuario <b>admin</b> y la contraseña de Render. Prueba: usuario <b>prueba</b>, contraseña <b>prueba2026</b>.
+        </p>
       </form>
     </div>
   );

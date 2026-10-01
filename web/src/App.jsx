@@ -628,6 +628,104 @@ function DriveFiles({ clients }) {
   );
 }
 
+function currentSession() {
+  try { return JSON.parse(localStorage.getItem("sc-user") || "null"); } catch { return null; }
+}
+
+function logout() {
+  localStorage.removeItem("sc-token");
+  localStorage.removeItem("sc-user");
+  window.location.reload();
+}
+
+function SessionBar() {
+  const me = currentSession();
+  if (!me) return null;
+  return (
+    <div className="text-xs mt-1 flex items-center justify-end gap-2">
+      {me.sandbox && <span className="px-1.5 py-0.5 rounded-sm font-semibold" style={{ background: "#FBF1E4", color: "#7A4B12" }}>PRUEBA</span>}
+      <span style={{ color: C.mute }}>{me.username}</span>
+      <button type="button" className="underline" style={{ color: C.blue }} onClick={logout}>Salir</button>
+    </div>
+  );
+}
+
+function UsersPanel() {
+  const me = currentSession();
+  const [users, setUsers] = useState([]);
+  const [form, setForm] = useState({ username: "", name: "", password: "", sandbox: false });
+  const [error, setError] = useState("");
+  const [ownPassword, setOwnPassword] = useState("");
+
+  const load = async () => {
+    if (!me || me.role !== "admin") return;
+    const data = await window.scApi("/api/users");
+    setUsers(data.users || []);
+  };
+  useEffect(() => { load().catch(() => {}); }, []);
+  if (!me) return null;
+
+  const create = async () => {
+    setError("");
+    try {
+      await window.scApi("/api/users", { method: "POST", body: JSON.stringify(form) });
+      setForm({ username: "", name: "", password: "", sandbox: false });
+      await load();
+    } catch (err) {
+      setError(err.message || "No se pudo crear");
+    }
+  };
+  const remove = async (id) => {
+    if (!window.confirm("¿Borrar este usuario?")) return;
+    await window.scApi("/api/users/" + id, { method: "DELETE" });
+    await load();
+  };
+  const changeOwn = async () => {
+    setError("");
+    try {
+      await window.scApi("/api/password", { method: "POST", body: JSON.stringify({ password: ownPassword }) });
+      setOwnPassword("");
+      setError("Contraseña cambiada");
+    } catch (err) {
+      setError(err.message || "No se pudo cambiar");
+    }
+  };
+
+  return (
+    <Card className="p-5 mt-4">
+      <h3 className="font-display text-lg mb-2" style={{ color: C.ink }}>Usuarios</h3>
+      <p className="text-xs mb-3" style={{ color: C.mute }}>
+        Los usuarios normales ven los mismos clientes. Si marca «solo prueba», ese acceso tiene clientes y facturas aparte.
+      </p>
+      {me.sandbox && <div className="text-xs mb-3" style={{ color: "#7A4B12" }}>Está en la cuenta de prueba. Lo que haga aquí no aparece en la cuenta real.</div>}
+      <div className="flex gap-2 mb-3">
+        <Input type="password" placeholder="Nueva contraseña de esta cuenta" value={ownPassword} onChange={(e) => setOwnPassword(e.target.value)} />
+        <Btn kind="secondary" onClick={changeOwn}>Cambiar</Btn>
+      </div>
+      {me.role === "admin" && (
+        <>
+          <div className="space-y-1 mb-3 text-sm">
+            {users.map((u) => (
+              <div key={u.id} className="flex items-center justify-between gap-2">
+                <span>{u.username} — {u.name} {u.sandbox ? "(prueba)" : ""} {u.role === "admin" ? "(admin)" : ""}</span>
+                {u.role !== "admin" && <button className="text-xs underline" style={{ color: C.danger }} onClick={() => remove(u.id)}>Borrar</button>}
+              </div>
+            ))}
+          </div>
+          <div className="grid sm:grid-cols-2 gap-2">
+            <Input placeholder="usuario" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+            <Input placeholder="nombre" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <Input type="password" placeholder="contraseña" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+            <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={form.sandbox} onChange={(e) => setForm({ ...form, sandbox: e.target.checked })} /> solo prueba</label>
+          </div>
+          <Btn className="mt-2" onClick={create}>Añadir usuario</Btn>
+        </>
+      )}
+      {error && <div className="text-xs mt-2" style={{ color: "#7A4B12" }}>{error}</div>}
+    </Card>
+  );
+}
+
 export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [entries, setEntries] = useState([]);
@@ -659,34 +757,60 @@ export default function App() {
   const [tvaRate, setTvaRate] = useState(null);
   const [invoiceView, setInvoiceView] = useState(null);
 
+  const TIMER_SESSION = "sc-timer-session";
+  const readSessionTimer = () => {
+    try {
+      const raw = sessionStorage.getItem(TIMER_SESSION);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  };
+  const writeSessionTimer = (value) => {
+    try {
+      if (value) sessionStorage.setItem(TIMER_SESSION, JSON.stringify(value));
+      else sessionStorage.removeItem(TIMER_SESSION);
+    } catch {}
+  };
+
   useEffect(() => {
     (async () => {
-      const [e, c, co, iv, tm] = await Promise.all([
+      const [e, c, co, iv] = await Promise.all([
         load(KEYS.entries, []),
         load(KEYS.clients, []),
         load(KEYS.company, defaultCompany),
         load(KEYS.invoices, []),
-        load(KEYS.timer, null),
       ]);
       setEntries(e);
       setClients(c);
       setCompany({ ...defaultCompany, ...co });
       setInvoices(iv);
-      if (tm) {
-        setTimer(tm);
-        setTClient(tm.clientCode);
-        setTDossier(tm.dossier);
-        setTDesc(tm.description || "");
+      const local = readSessionTimer();
+      if (local && local.startTs) {
+        setTimer(local);
+        setTClient(local.clientCode);
+        setTDossier(local.dossier);
+        setTDesc(local.description || "");
       }
+      save(KEYS.timer, null);
       setLoaded(true);
     })();
+  }, []);
+
+  useEffect(() => {
+    window.stopTimerForClose = () => writeSessionTimer(null);
+    const onHide = (e) => {
+      if (!e.persisted) writeSessionTimer(null);
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
   }, []);
 
   useEffect(() => { if (loaded) save(KEYS.entries, entries); }, [entries, loaded]);
   useEffect(() => { if (loaded) save(KEYS.clients, clients); }, [clients, loaded]);
   useEffect(() => { if (loaded) save(KEYS.company, company); }, [company, loaded]);
   useEffect(() => { if (loaded) save(KEYS.invoices, invoices); }, [invoices, loaded]);
-  useEffect(() => { if (loaded) save(KEYS.timer, timer); }, [timer, loaded]);
+  useEffect(() => { writeSessionTimer(timer); }, [timer]);
 
   useEffect(() => {
     if (!timer) return;
@@ -773,7 +897,9 @@ export default function App() {
 
   const startTimer = () => {
     if (!tClient || !tDossier.trim() || timer) return;
-    setTimer({ startTs: Date.now(), clientCode: tClient, dossier: tDossier.trim(), description: tDesc.trim() });
+    const next = { startTs: Date.now(), clientCode: tClient, dossier: tDossier.trim(), description: tDesc.trim() };
+    setTimer(next);
+    writeSessionTimer(next);
   };
 
   const stopTimer = () => {
@@ -800,6 +926,8 @@ export default function App() {
     }
     setTimer(null);
     setTDesc("");
+    writeSessionTimer(null);
+    save(KEYS.timer, null);
   };
 
   const filteredEntries = useMemo(() => {
@@ -926,6 +1054,7 @@ export default function App() {
             <div className="text-right">
               <div className="font-display text-xl" style={{ color: C.ink }}>Temps &amp; facturation</div>
               <div className="text-xs font-mono" style={{ color: C.mute }}>{loaded ? "Enregistré automatiquement" : "Chargement…"}</div>
+              <SessionBar />
             </div>
           </div>
           <div className="flex gap-5 text-sm font-medium overflow-x-auto">
@@ -1286,6 +1415,7 @@ export default function App() {
                 <Field label="Message en bas de facture"><Input value={company.piedDePage} onChange={(e) => setCompany({ ...company, piedDePage: e.target.value })} /></Field>
               </div>
             </Card>
+            <UsersPanel />
             <Card className="p-5 mt-4">
               <h3 className="font-display text-lg mb-2" style={{ color: C.ink }}>Contrôle de la QR-facture</h3>
               {qrCheck.errors.length > 0 ? (
