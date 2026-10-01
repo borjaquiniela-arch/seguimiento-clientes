@@ -4,7 +4,10 @@ const crypto = require("crypto");
 const express = require("express");
 const cors = require("cors");
 const os = require("os");
+const multer = require("multer");
 const db = require("./db");
+const drive = require("./drive");
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 const PORT = Number(process.env.PORT || 8787);
 const tokenFile = path.join(process.env.DATA_DIR || path.join(__dirname, "..", "data"), "tokens.json");
@@ -23,11 +26,19 @@ function saveTokens(map) {
 }
 
 function tokenOk(req) {
+  return Boolean(currentUser(req));
+}
+
+function currentUser(req) {
   const h = req.headers.authorization || "";
   const t = h.startsWith("Bearer ") ? h.slice(7) : req.query.token;
-  if (!t) return false;
+  if (!t) return null;
   const tokens = loadTokens();
-  return Boolean(tokens[t]);
+  const rec = tokens[t];
+  if (!rec) return null;
+  const userId = typeof rec === "object" ? rec.userId : null;
+  if (!userId) return null;
+  return db.userById(userId);
 }
 
 function requireAuth(req, res, next) {
@@ -45,26 +56,106 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.post("/api/login", (req, res) => {
+  const username = String((req.body && req.body.username) || "");
   const password = String((req.body && req.body.password) || "");
-  if (password !== db.password()) {
-    return res.status(401).json({ error: "Contraseña incorrecta" });
-  }
+  const user = db.findUser(username, password);
+  if (!user) return res.status(401).json({ error: "Usuario o contraseña incorrectos" });
   const token = crypto.randomBytes(24).toString("hex");
   const tokens = loadTokens();
-  tokens[token] = Date.now();
+  tokens[token] = { at: Date.now(), userId: user.id };
   saveTokens(tokens);
-  res.json({ token });
+  res.json({ token, user });
+});
+
+app.get("/api/me", requireAuth, (req, res) => {
+  res.json({ user: currentUser(req) });
+});
+
+app.get("/api/users", requireAuth, (req, res) => {
+  const me = currentUser(req);
+  if (!me || me.role !== "admin") return res.status(403).json({ error: "Solo el administrador" });
+  res.json({ users: db.listUsers() });
+});
+
+app.post("/api/users", requireAuth, (req, res) => {
+  const me = currentUser(req);
+  if (!me || me.role !== "admin") return res.status(403).json({ error: "Solo el administrador" });
+  try {
+    const user = db.addUser(req.body || {});
+    res.json({ user });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/users/:id", requireAuth, (req, res) => {
+  const me = currentUser(req);
+  if (!me || me.role !== "admin") return res.status(403).json({ error: "Solo el administrador" });
+  if (req.params.id === me.id) return res.status(400).json({ error: "No puede borrarse a sí mismo" });
+  try {
+    db.removeUser(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.post("/api/password", requireAuth, (req, res) => {
+  const me = currentUser(req);
   const next = String((req.body && req.body.password) || "").trim();
   if (next.length < 4) return res.status(400).json({ error: "Mínimo 4 caracteres" });
-  db.setSetting("password", next);
-  res.json({ ok: true });
+  try {
+    db.setUserPassword(me.id, next);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
-app.get("/api/data", requireAuth, (_req, res) => {
-  res.json(db.getAll());
+app.get("/api/data", requireAuth, (req, res) => {
+  res.json(db.getAll(currentUser(req)));
+});
+
+app.get("/api/drive/status", requireAuth, (_req, res) => {
+  res.json(drive.status());
+});
+
+app.get("/api/drive/files", requireAuth, async (req, res) => {
+  try {
+    res.json(await drive.list(req.query.folderId || ""));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/drive/folder", requireAuth, async (req, res) => {
+  try {
+    const created = await drive.createFolder(req.body && req.body.name, req.body && req.body.parentId);
+    res.json(created);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/drive/upload", requireAuth, upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "Falta el archivo" });
+    res.json(await drive.upload(req.file, req.body && req.body.parentId));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get("/api/drive/file/:id", requireAuth, async (req, res) => {
+  try {
+    const { meta, stream } = await drive.download(req.params.id);
+    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(meta.name || "archivo")}"`);
+    if (meta.mimeType) res.setHeader("Content-Type", meta.mimeType);
+    stream.on("error", () => res.status(500).end());
+    stream.pipe(res);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.put("/api/data/:key", requireAuth, (req, res) => {
@@ -72,7 +163,7 @@ app.put("/api/data/:key", requireAuth, (req, res) => {
   if (!["entries", "clients", "company", "invoices", "timer"].includes(key)) {
     return res.status(400).json({ error: "Clave no válida" });
   }
-  db.setStore(key, req.body);
+  db.setStore(key, req.body, currentUser(req));
   res.json({ ok: true });
 });
 
