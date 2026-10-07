@@ -8,6 +8,7 @@ const KEY_MAP = {
   "company-v1": "company",
   "invoices-v1": "invoices",
   "timer-v1": "timer",
+  "appointments-v1": "appointments",
 };
 
 function apiBase() {
