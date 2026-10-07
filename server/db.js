@@ -185,6 +185,7 @@ function getAll(user) {
     company: current.company || DEFAULTS.company,
     invoices: current.invoices || [],
     timer: current.timer || null,
+    appointments: current.appointments || [],
   };
 }
 

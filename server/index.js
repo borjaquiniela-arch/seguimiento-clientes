@@ -7,6 +7,7 @@ const os = require("os");
 const multer = require("multer");
 const db = require("./db");
 const drive = require("./drive");
+const backup = require("./backup");
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 const PORT = Number(process.env.PORT || 8787);
@@ -158,9 +159,33 @@ app.get("/api/drive/file/:id", requireAuth, async (req, res) => {
   }
 });
 
+app.get("/api/backups", requireAuth, (req, res) => {
+  const me = currentUser(req);
+  if (!me || me.role !== "admin") return res.status(403).json({ error: "Solo el administrador" });
+  res.json({ hours: backup.hours, files: backup.listBackups() });
+});
+
+app.post("/api/backups", requireAuth, async (req, res) => {
+  const me = currentUser(req);
+  if (!me || me.role !== "admin") return res.status(403).json({ error: "Solo el administrador" });
+  try {
+    res.json(await backup.run());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get("/api/backups/:name", requireAuth, (req, res) => {
+  const me = currentUser(req);
+  if (!me || me.role !== "admin") return res.status(403).json({ error: "Solo el administrador" });
+  const full = backup.filePath(req.params.name);
+  if (!full) return res.status(404).json({ error: "Copia no encontrada" });
+  res.download(full);
+});
+
 app.put("/api/data/:key", requireAuth, (req, res) => {
   const key = req.params.key;
-  if (!["entries", "clients", "company", "invoices", "timer"].includes(key)) {
+  if (!["entries", "clients", "company", "invoices", "timer", "appointments"].includes(key)) {
     return res.status(400).json({ error: "Clave no válida" });
   }
   db.setStore(key, req.body, currentUser(req));
@@ -188,4 +213,5 @@ app.listen(PORT, "0.0.0.0", () => {
   ips.forEach((ip) => console.log(`  Red local: http://${ip}:${PORT}`));
   if (process.env.PUBLIC_URL) console.log(`  Internet: ${process.env.PUBLIC_URL}`);
   console.log("Contraseña inicial: afid2026 — cámbiala en cuanto entre.");
+  backup.start();
 });
