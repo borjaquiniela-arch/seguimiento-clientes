@@ -853,6 +853,23 @@ function BackupPanel({ invoices }) {
     window.scApi("/api/backups").then((data) => setFiles(data.files || [])).catch(() => {});
   }, [allowed]);
   if (!allowed) return null;
+  const downloadFile = async (name) => {
+    const token = localStorage.getItem("sc-token") || "";
+    const base = (localStorage.getItem("sc-server") || "").replace(/\/$/, "");
+    const res = await fetch(base + "/api/backups/" + encodeURIComponent(name), { headers: { Authorization: "Bearer " + token } });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+  };
+  const downloadNow = async () => {
+    const created = await window.scApi("/api/backups", { method: "POST" });
+    if (created && created.name) await downloadFile(created.name);
+    const data = await window.scApi("/api/backups");
+    setFiles(data.files || []);
+  };
   const restore = async (name) => {
     if (!window.confirm("Esto sustituye los clientes, horas, facturas y citas actuales por esta copia.")) return;
     await window.scApi("/api/backups/" + encodeURIComponent(name) + "/restore", { method: "POST" });
@@ -861,13 +878,19 @@ function BackupPanel({ invoices }) {
   return (
     <Card className="p-5 mt-4">
       <h3 className="font-display text-lg mb-2" style={{ color: C.ink }}>Copias y Crésus</h3>
-      <Btn kind="secondary" onClick={() => exportCresus(invoices)}>Exportar facturas del mes</Btn>
-      <p className="text-xs my-2" style={{ color: C.mute }}>Restaurar vuelve a esa copia. Antes se guarda el estado actual.</p>
+      <div className="flex gap-2 flex-wrap">
+        <Btn kind="secondary" onClick={() => exportCresus(invoices)}>Exportar facturas del mes</Btn>
+        <Btn kind="secondary" onClick={downloadNow}>Descargar copia al ordenador</Btn>
+      </div>
+      <p className="text-xs my-2" style={{ color: C.mute }}>La descarga guarda clientes, horas, facturas y citas en Descargas. Guárdela en un disco aparte por si Render falla.</p>
       {files.length === 0 && <div className="text-xs" style={{ color: C.mute }}>Todavía no hay copias. La primera se crea un minuto después de arrancar.</div>}
       {files.slice(0, 8).map((f) => (
         <div key={f.name} className="flex items-center justify-between text-xs py-1">
           <span className="font-mono">{f.name}</span>
-          <button className="underline" style={{ color: C.blue }} onClick={() => restore(f.name)}>Restaurar</button>
+          <span className="flex gap-3">
+            <button className="underline" style={{ color: C.blue }} onClick={() => downloadFile(f.name)}>Descargar</button>
+            <button className="underline" style={{ color: C.blue }} onClick={() => restore(f.name)}>Restaurar</button>
+          </span>
         </div>
       ))}
     </Card>
