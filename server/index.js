@@ -175,6 +175,16 @@ app.post("/api/backups", requireAuth, async (req, res) => {
   }
 });
 
+app.post("/api/backups/:name/restore", requireAuth, (req, res) => {
+  const me = currentUser(req);
+  if (!me || me.role !== "admin") return res.status(403).json({ error: "Solo el administrador" });
+  try {
+    res.json(backup.restore(req.params.name));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.get("/api/backups/:name", requireAuth, (req, res) => {
   const me = currentUser(req);
   if (!me || me.role !== "admin") return res.status(403).json({ error: "Solo el administrador" });

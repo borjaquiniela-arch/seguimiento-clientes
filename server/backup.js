@@ -72,4 +72,15 @@ function filePath(name) {
   return full;
 }
 
-module.exports = { run, start, listBackups, filePath, hours };
+function restore(name) {
+  const full = filePath(name);
+  if (!full) throw new Error("Copia no encontrada");
+  if (fs.existsSync(source)) {
+    fs.mkdirSync(backupDir, { recursive: true });
+    fs.copyFileSync(source, path.join(backupDir, `antes-de-restaurar-${stamp()}.json`));
+  }
+  fs.copyFileSync(full, source);
+  return { ok: true, name };
+}
+
+module.exports = { run, start, listBackups, filePath, hours, restore };
