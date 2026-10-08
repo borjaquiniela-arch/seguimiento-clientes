@@ -814,6 +814,66 @@ function Agenda({ clients, appointments, setAppointments }) {
   );
 }
 
+function Reminders({ appointments, invoices }) {
+  const today = todayISO();
+  const todayAppts = appointments.filter((a) => a.date === today);
+  const late = invoices.filter((inv) => inv.status !== "payee" && inv.due && inv.due < today);
+  if (!todayAppts.length && !late.length) return null;
+  return (
+    <Card className="p-4 mb-1">
+      <h2 className="font-display text-lg mb-2" style={{ color: C.ink }}>À suivre</h2>
+      {todayAppts.map((a) => <div key={a.id} className="text-sm">{a.time} · {a.clientCode} — {a.title}</div>)}
+      {late.map((inv) => <div key={inv.id} className="text-sm" style={{ color: "#7A4B12" }}>Facture {inv.number} · {inv.client.nom} · échue le {fmtDate(inv.due)} · {fmtCHF(inv.total)}</div>)}
+    </Card>
+  );
+}
+
+function exportCresus(invoices) {
+  const month = todayISO().slice(0, 7);
+  const rows = invoices.filter((inv) => (inv.date || "").startsWith(month));
+  const header = ["date", "numero", "client", "heures", "ht", "tva", "ttc", "etat"];
+  const lines = [header.join(";")].concat(rows.map((inv) => [
+    inv.date, inv.number, inv.client.nom, String(inv.totalHours || "").replace(".", ","),
+    String(inv.subtotal || 0).replace(".", ","), String(inv.tva || 0).replace(".", ","),
+    String(inv.total || 0).replace(".", ","), inv.status === "payee" ? "payee" : "ouverte",
+  ].join(";")));
+  const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `cresus-${month}.csv`;
+  a.click();
+}
+
+function BackupPanel({ invoices }) {
+  const me = currentSession();
+  const [files, setFiles] = useState([]);
+  const allowed = me && me.role === "admin" && !me.sandbox;
+  useEffect(() => {
+    if (!allowed) return;
+    window.scApi("/api/backups").then((data) => setFiles(data.files || [])).catch(() => {});
+  }, [allowed]);
+  if (!allowed) return null;
+  const restore = async (name) => {
+    if (!window.confirm("Esto sustituye los clientes, horas, facturas y citas actuales por esta copia.")) return;
+    await window.scApi("/api/backups/" + encodeURIComponent(name) + "/restore", { method: "POST" });
+    window.location.reload();
+  };
+  return (
+    <Card className="p-5 mt-4">
+      <h3 className="font-display text-lg mb-2" style={{ color: C.ink }}>Copias y Crésus</h3>
+      <Btn kind="secondary" onClick={() => exportCresus(invoices)}>Exportar facturas del mes</Btn>
+      <p className="text-xs my-2" style={{ color: C.mute }}>Restaurar vuelve a esa copia. Antes se guarda el estado actual.</p>
+      {files.length === 0 && <div className="text-xs" style={{ color: C.mute }}>Todavía no hay copias. La primera se crea un minuto después de arrancar.</div>}
+      {files.slice(0, 8).map((f) => (
+        <div key={f.name} className="flex items-center justify-between text-xs py-1">
+          <span className="font-mono">{f.name}</span>
+          <button className="underline" style={{ color: C.blue }} onClick={() => restore(f.name)}>Restaurar</button>
+        </div>
+      ))}
+    </Card>
+  );
+}
+
 export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [entries, setEntries] = useState([]);
@@ -1094,11 +1154,17 @@ export default function App() {
   };
 
   const saveInvoice = () => {
-    const inv = { ...invoiceView, saved: true };
+    const inv = { ...invoiceView, saved: true, status: "ouverte", paidDate: "" };
     setInvoices([inv, ...invoices]);
     setEntries(entries.map((e) => (inv.entryIds.includes(e.id) ? { ...e, invoiceId: inv.id } : e)));
     setInvoiceView(inv);
     setInvNumber("");
+  };
+
+  const setInvoiceStatus = (inv, status) => {
+    const next = { ...inv, status, paidDate: status === "payee" ? todayISO() : "" };
+    setInvoices(invoices.map((i) => (i.id === inv.id ? next : i)));
+    if (invoiceView && invoiceView.id === inv.id) setInvoiceView(next);
   };
 
   const deleteInvoice = (inv) => {
@@ -1169,6 +1235,7 @@ export default function App() {
         {/* ---------------- SAISIE ---------------- */}
         {tab === "saisie" && (
           <div className="grid md:grid-cols-5 gap-5">
+            <div className="md:col-span-5"><Reminders appointments={appointments} invoices={invoices} /></div>
             <div className="md:col-span-2 space-y-5">
               <Card className="p-5" style={timer ? { borderColor: C.green } : undefined}>
                 <div className="flex items-center gap-2 mb-4">
@@ -1432,7 +1499,7 @@ export default function App() {
                       {invoiceEntries.length} entrée{invoiceEntries.length > 1 ? "s" : ""} à facturer · {fmtHours(invoiceEntries.reduce((s, e) => s + e.hours, 0))} h
                     </div>
                   )}
-                  <Btn disabled={!invClient || invoiceEntries.length === 0} onClick={() => setInvoiceView(buildInvoice())} className="w-full">
+                  <Btn disabled={!invClient || invoiceEntries.length === 0} onClick={() => { const inv = buildInvoice(); if (inv) setInvoiceView(inv); }} className="w-full">
                     <FileText size={15} /> Aperçu de la facture
                   </Btn>
                 </div>
@@ -1449,9 +1516,10 @@ export default function App() {
                   <div key={inv.id} className="px-4 py-3 border-b flex items-center gap-3" style={{ borderColor: "#EFEDE6" }}>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium"><span className="font-mono">{inv.number}</span> · {inv.client.nom}</div>
-                      <div className="text-xs font-mono" style={{ color: C.mute }}>{fmtDate(inv.date)} · {inv.client.code}</div>
+                      <div className="text-xs font-mono" style={{ color: C.mute }}>{fmtDate(inv.date)} · {inv.client.code} · {inv.status === "payee" ? "Payée" : inv.status === "envoyee" ? "Envoyée" : "Ouverte"}</div>
                     </div>
                     <div className="font-mono text-sm" style={{ color: C.ink }}>{fmtCHF(inv.total)}</div>
+                    {inv.status !== "payee" && <Btn kind="secondary" className="!py-1" onClick={() => setInvoiceStatus(inv, inv.status === "envoyee" ? "payee" : "envoyee")}>{inv.status === "envoyee" ? "Payée" : "Envoyée"}</Btn>}
                     <Btn kind="secondary" onClick={() => setInvoiceView(inv)} className="!py-1">Ouvrir</Btn>
                     <button title="Supprimer (les heures redeviennent à facturer)" onClick={() => deleteInvoice(inv)}><Trash2 size={14} style={{ color: C.danger }} /></button>
                   </div>
@@ -1509,6 +1577,7 @@ export default function App() {
                 <Field label="Message en bas de facture"><Input value={company.piedDePage} onChange={(e) => setCompany({ ...company, piedDePage: e.target.value })} /></Field>
               </div>
             </Card>
+            <BackupPanel invoices={invoices} />
             <UsersPanel />
             <Card className="p-5 mt-4">
               <h3 className="font-display text-lg mb-2" style={{ color: C.ink }}>Contrôle de la QR-facture</h3>
